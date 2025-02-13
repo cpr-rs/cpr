@@ -1,5 +1,5 @@
 [package]
-name = "cpr"
+name = "cpr-cli"
 version = "0.1.0"
 authors = ["Jules Nieves <jules.nieves0301@gmail.com>"]
 license = "MIT"
