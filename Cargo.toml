@@ -11,6 +11,10 @@ keywords = ["c++", "project-manager", "cli"]
 categories = ["command-line-utilities"]
 edition = "2021"
 
+[[bin]]
+name = "cpr"
+path = "src/main.rs"
+
 [dependencies]
 thiserror = "2.0.11"
 anyhow = "1.0.95"
