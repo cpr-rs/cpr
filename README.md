@@ -1,5 +1,11 @@
 # CPR
 
+![Crates.io Version](https://img.shields.io/crates/v/cpr-cli)
+![Crates.io Size](https://img.shields.io/crates/size/cpr-cli)
+![Crates.io License](https://img.shields.io/crates/l/cpr-cli)
+![Crates.io Total Downloads](https://img.shields.io/crates/d/cpr-cli)
+
+
 ## Description
 
 CPR is a simple command line utility for managing C/C++ projects through templates. It allows you to initialize a new project and start working quickly while also giving template maintainers flexibility in how they want to structure their templates.
