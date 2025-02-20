@@ -4,6 +4,8 @@ mod format;
 use crate::errors::ProjectInitError;
 use chrono::Datelike;
 use clap::{Parser, Subcommand};
+use errors::CPRConfigError;
+use miette::IntoDiagnostic;
 use requestty::Question;
 use std::{collections::HashMap, path::PathBuf};
 
@@ -76,7 +78,7 @@ struct ProjectInfo {
     author: String,
 }
 
-fn prompt_project_info() -> anyhow::Result<ProjectInfo> {
+fn prompt_project_info() -> miette::Result<ProjectInfo> {
     let questions = vec![
         Question::input("project_name")
             .message("Project name?")
@@ -87,7 +89,7 @@ fn prompt_project_info() -> anyhow::Result<ProjectInfo> {
             .default("John Doe")
             .build(),
     ];
-    let answers = requestty::prompt(questions)?;
+    let answers = requestty::prompt(questions).into_diagnostic()?;
     let project_name = answers["project_name"].as_string().unwrap().to_string();
     let author = answers["author"].as_string().unwrap().to_string();
 
@@ -97,7 +99,7 @@ fn prompt_project_info() -> anyhow::Result<ProjectInfo> {
     })
 }
 
-fn prompt_template_questions(template_questions: Vec<toml::Value>) -> anyhow::Result<upon::Value> {
+fn prompt_template_questions(template_questions: Vec<toml::Value>) -> miette::Result<upon::Value> {
     let mut questions = Vec::<Question>::with_capacity(template_questions.len());
     for template_question in template_questions {
         match template_question {
@@ -140,23 +142,21 @@ fn prompt_template_questions(template_questions: Vec<toml::Value>) -> anyhow::Re
                                         }
                                     }
                                 }
-                                questions.push(
-                                    match ty {
-                                        "select" => Question::select(key)
-                                            .message(message)
-                                            .choices(items)
-                                            .build(),
-                                        "multi_select" => Question::multi_select(key)
-                                            .message(message)
-                                            .choices(items)
-                                            .build(),
-                                        "order_select" => Question::order_select(key)
-                                            .message(message)
-                                            .choices(items_raw)
-                                            .build(),
-                                        _ => unreachable!(),
-                                    },
-                                );
+                                questions.push(match ty {
+                                    "select" => Question::select(key)
+                                        .message(message)
+                                        .choices(items)
+                                        .build(),
+                                    "multi_select" => Question::multi_select(key)
+                                        .message(message)
+                                        .choices(items)
+                                        .build(),
+                                    "order_select" => Question::order_select(key)
+                                        .message(message)
+                                        .choices(items_raw)
+                                        .build(),
+                                    _ => unreachable!(),
+                                });
                             }
                             _ => {
                                 eprintln!(
@@ -183,7 +183,7 @@ fn prompt_template_questions(template_questions: Vec<toml::Value>) -> anyhow::Re
     }
 
     let mut map = HashMap::<String, upon::Value>::new();
-    for (key, answer) in requestty::prompt(questions)? {
+    for (key, answer) in requestty::prompt(questions).into_diagnostic()? {
         use requestty::{Answer, ExpandItem, ListItem};
         map.insert(
             key,
@@ -207,25 +207,35 @@ fn prompt_template_questions(template_questions: Vec<toml::Value>) -> anyhow::Re
         );
     }
 
-    Ok(upon::to_value(map)?)
+    upon::to_value(map).into_diagnostic()
 }
 
-fn init(directory: PathBuf, repo_path: String, info: ProjectInfo) -> anyhow::Result<()> {
+fn init(directory: PathBuf, repo_path: String, info: ProjectInfo) -> miette::Result<()> {
     let _ = git2::Repository::clone(&format!("https://github.com/{}.git", repo_path), &directory)
-        .map_err(|_| ProjectInitError::GitCloneFailed)?;
+        .map_err(|e| {
+            if e.code() == git2::ErrorCode::NotFound {
+                ProjectInitError::GitRepoNotFound
+            } else {
+                ProjectInitError::GitCloneFail
+            }
+        })
+        .into_diagnostic()?;
 
     // let users decide their own vcs configuration
     std::fs::remove_dir_all(directory.join(".git"))
-        .map_err(|_| ProjectInitError::GitCloneFailed)?;
+        .map_err(|_| ProjectInitError::GitCloneFail)
+        .into_diagnostic()?;
 
     // if `cpr.toml` exists, use it
     let cpr_path = directory.join("cpr.toml");
     let mut template_answers = upon::Value::None;
     if cpr_path.exists() {
         let cpr = std::fs::read_to_string(&cpr_path)
-            .map_err(|_| ProjectInitError::ProjectDirCreateFailed)?;
-        let cpr: toml::Value =
-            toml::de::from_str(&cpr).map_err(|_| ProjectInitError::ProjectDirCreateFailed)?;
+            .map_err(|_| CPRConfigError::FileReadFail)
+            .into_diagnostic()?;
+        let cpr: toml::Value = toml::de::from_str(&cpr)
+            .map_err(|_| CPRConfigError::TomlParseFail)
+            .into_diagnostic()?;
 
         template_answers = match cpr {
             toml::Value::Table(table) => {
@@ -268,9 +278,14 @@ fn init(directory: PathBuf, repo_path: String, info: ProjectInfo) -> anyhow::Res
         }
 
         let path = entry.into_path();
-        let contents =
-            std::fs::read_to_string(&path).map_err(|_| ProjectInitError::ProjectDirCreateFailed)?;
-        engine.add_template("tmp", contents)?;
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|_| {
+                ProjectInitError::ReadFileFail(
+                    path.file_name().unwrap().to_str().unwrap().to_string(),
+                )
+            })
+            .into_diagnostic()?;
+        engine.add_template("tmp", contents).into_diagnostic()?;
 
         let result = engine
             .template("tmp")
@@ -283,37 +298,48 @@ fn init(directory: PathBuf, repo_path: String, info: ProjectInfo) -> anyhow::Res
                 author: &info.author,
                 cpr: &template_answers,
             })
-            .to_string()?;
+            .to_string()
+            .into_diagnostic()?;
 
-        std::fs::write(path, result).map_err(|_| ProjectInitError::ProjectDirCreateFailed)?;
+        std::fs::write(&path, result)
+            .map_err(|_| {
+                ProjectInitError::WriteFileFail(
+                    path.file_name().unwrap().to_str().unwrap().to_string(),
+                )
+            })
+            .into_diagnostic()?;
 
         engine.remove_template("tmp");
     }
 
     // remove cpr.toml
-    std::fs::remove_file(cpr_path).map_err(|_| ProjectInitError::ProjectDirCreateFailed)?;
+    if cpr_path.exists() && std::fs::remove_file(cpr_path).is_err() {
+        eprintln!("! WARN: Failed to remove cpr.toml");
+    }
 
     println!("Project initialized successfully");
 
     Ok(())
 }
 
-fn new(repo_path: String, info: ProjectInfo) -> anyhow::Result<()> {
+fn new(repo_path: String, info: ProjectInfo) -> miette::Result<()> {
     let project_dir = PathBuf::from(info.project_name.to_lowercase());
 
     if project_dir.exists() {
         println!("Project directory already exists");
-        return Err(ProjectInitError::ProjectDirExists.into());
+        return Err(ProjectInitError::ProjectDirExists).into_diagnostic();
     }
 
-    std::fs::create_dir(&project_dir).map_err(|_| ProjectInitError::ProjectDirCreateFailed)?;
+    std::fs::create_dir(&project_dir)
+        .map_err(|_| ProjectInitError::ProjectDirCreateFail)
+        .into_diagnostic()?;
 
     init(project_dir, repo_path, info)?;
 
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> miette::Result<()> {
     let args = Cli::parse();
 
     match args.command {
