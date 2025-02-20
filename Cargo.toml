@@ -1,6 +1,6 @@
 [package]
 name = "cpr-cli"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Jules Nieves <jules.nieves0301@gmail.com>"]
 license = "MIT"
 description = "A simple git-based project manager aimed at C/C++"
@@ -10,6 +10,7 @@ repository = "https://github.com/cpr-rs/cpr"
 keywords = ["c++", "project-manager", "cli"]
 categories = ["command-line-utilities"]
 edition = "2021"
+rust-version = "1.74.1"
 
 [[bin]]
 name = "cpr"
