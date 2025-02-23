@@ -5,9 +5,18 @@ use crate::errors::ProjectInitError;
 use chrono::Datelike;
 use clap::{Parser, Subcommand};
 use errors::CPRConfigError;
+use git2::{
+    build::{CheckoutBuilder, RepoBuilder},
+    FetchOptions, RemoteCallbacks,
+};
+use indicatif::{ProgressBar, ProgressStyle};
 use miette::IntoDiagnostic;
 use requestty::Question;
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 pub fn get_styles() -> clap::builder::Styles {
     clap::builder::Styles::styled()
@@ -210,8 +219,82 @@ fn prompt_template_questions(template_questions: Vec<toml::Value>) -> miette::Re
     upon::to_value(map).into_diagnostic()
 }
 
-fn init(directory: PathBuf, repo_path: String, info: ProjectInfo) -> miette::Result<()> {
-    let _ = git2::Repository::clone(&format!("https://github.com/{}.git", repo_path), &directory)
+struct GitCloneState {
+    total: usize,
+    current: usize,
+    path: Option<PathBuf>,
+    started_resolution: bool,
+}
+
+fn clone_repository(directory: &Path, repo_path: String) -> miette::Result<()> {
+    let clone_state = RefCell::new(GitCloneState {
+        total: 0,
+        current: 0,
+        path: None,
+        started_resolution: false,
+    });
+    let bar = ProgressBar::new(100);
+    bar.set_style(
+        ProgressStyle::with_template(
+            "{spinner} [{elapsed_precise}] [{bar:30}] {pos:>7}/{len:7} {msg}",
+        )
+        .unwrap()
+        .progress_chars("#>-"),
+    );
+
+    let mut cb = RemoteCallbacks::new();
+    cb.transfer_progress(|stats| {
+        let mut state = clone_state.borrow_mut();
+        state.total = stats.total_objects();
+        state.current = stats.received_objects();
+        if state.current == state.total {
+            // resolving deltas
+            bar.set_message(format!(
+                "Resolving deltas {}/{}",
+                stats.indexed_deltas(),
+                stats.total_deltas()
+            ));
+            if state.started_resolution {
+                bar.reset();
+            }
+            bar.set_length(stats.total_deltas() as u64);
+            bar.set_position(stats.indexed_deltas() as u64);
+            state.started_resolution = true;
+        } else {
+            bar.set_length(state.total as u64);
+            bar.set_position(state.current as u64);
+            bar.set_message(format!(
+                "Cloning {} ({}/{} objects)",
+                repo_path, state.current, state.total
+            ));
+            bar.tick();
+        }
+        true
+    });
+
+    let mut co = CheckoutBuilder::new();
+    co.progress(|path, cur, total| {
+        let mut state = clone_state.borrow_mut();
+        state.path = path.map(|p| p.to_path_buf());
+        state.current = cur;
+        state.total = total;
+        if cur < total {
+            bar.set_length(total as u64);
+            bar.set_position(cur as u64);
+            bar.set_message(format!(
+                "Cloning {} ({}/{} objects)",
+                repo_path, state.current, state.total
+            ));
+            bar.tick();
+        }
+    });
+
+    let mut fo = FetchOptions::new();
+    fo.remote_callbacks(cb);
+    RepoBuilder::new()
+        .fetch_options(fo)
+        .with_checkout(co)
+        .clone(&format!("https://github.com/{}.git", repo_path), directory)
         .map_err(|e| {
             if e.code() == git2::ErrorCode::NotFound {
                 ProjectInitError::GitRepoNotFound
@@ -225,6 +308,12 @@ fn init(directory: PathBuf, repo_path: String, info: ProjectInfo) -> miette::Res
     std::fs::remove_dir_all(directory.join(".git"))
         .map_err(|_| ProjectInitError::GitCloneFail)
         .into_diagnostic()?;
+
+    Ok(())
+}
+
+fn init(directory: PathBuf, repo_path: String, info: ProjectInfo) -> miette::Result<()> {
+    clone_repository(&directory, repo_path)?;
 
     // if `cpr.toml` exists, use it
     let cpr_path = directory.join("cpr.toml");
@@ -272,19 +361,59 @@ fn init(directory: PathBuf, repo_path: String, info: ProjectInfo) -> miette::Res
     engine.add_formatter("camel", format::camel);
     engine.add_formatter("title", format::title);
 
+    // skip read errors if enabled
+    let mut skip_all = false;
+
     for entry in walker.into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_dir() {
             continue;
         }
 
         let path = entry.into_path();
-        let contents = std::fs::read_to_string(&path)
-            .map_err(|_| {
-                ProjectInitError::ReadFileFail(
-                    path.file_name().unwrap().to_str().unwrap().to_string(),
-                )
-            })
-            .into_diagnostic()?;
+
+        let contents = std::fs::read_to_string(&path).map_err(|_| {
+            ProjectInitError::ReadFileFail(path.file_name().unwrap().to_str().unwrap().to_string())
+        });
+        // instead of returning an error, we can prompt the user to skip the file
+        // the options should be:
+        // 1. Skip this error
+        // 2. Skip all errors
+        // 3. Abort
+
+        if let Err(e) = contents {
+            if skip_all {
+                continue;
+            }
+
+            let opt = Question::select("err_policy")
+                .message(format!(
+                    "Failed to read file `{}`: What would you like to do?",
+                    path.file_name().unwrap().to_str().unwrap(),
+                ))
+                .choices(vec![
+                    "Skip this error".to_string(),
+                    "Skip all future errors".into(),
+                    "Abort".into(),
+                ])
+                .build();
+            match requestty::prompt(vec![opt]).into_diagnostic()?["err_policy"]
+                .as_list_item()
+                .unwrap()
+                .text
+                .as_str()
+            {
+                "Skip this error" => continue,
+                "Skip all future errors" => {
+                    skip_all = true;
+                    continue;
+                }
+                "Abort" => return Err(e).into_diagnostic(),
+                _ => unreachable!(),
+            }
+        }
+
+        let contents = contents.unwrap();
+
         engine.add_template("tmp", contents).into_diagnostic()?;
 
         let result = engine
