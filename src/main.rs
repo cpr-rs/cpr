@@ -171,7 +171,10 @@ fn main() -> miette::Result<()> {
                         )
                         .build();
                     let prefix = requestty::prompt_one(service).into_diagnostic()?;
-                    config.set_default_service(&prefix.as_list_item().unwrap().text)?;
+                    // the prefix is formatted as `prefix` -> url, so we need to extract the prefix
+                    // this is a bit hacky, but it works
+                    let prefix = prefix.as_list_item().unwrap().text.split('`').nth(1).unwrap();
+                    config.set_default_service(prefix)?;
                 }
                 config.write(&config_path)?;
             }
