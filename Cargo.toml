@@ -1,6 +1,6 @@
 [package]
 name = "cpr-cli"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["Jules Nieves <jules.nieves0301@gmail.com>"]
 license = "MIT"
 description = "A simple git-based project manager aimed at C/C++"
