@@ -105,7 +105,7 @@ enum ServiceCommands {
     List,
     /// Set the default service
     /// The default service is used when a prefix is not specified
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = false)]
     Default {
         /// Prefix for the service (ex. gh)
         prefix: Option<String>,
@@ -163,7 +163,12 @@ fn main() -> miette::Result<()> {
                 } else {
                     let service = requestty::Question::select("service")
                         .message("Select the default service")
-                        .choices(config.services.keys().cloned())
+                        .choices(
+                            config
+                                .services
+                                .iter()
+                                .map(|(prefix, url)| format!("`{}` -> {}", prefix, url.url)),
+                        )
                         .build();
                     let prefix = requestty::prompt_one(service).into_diagnostic()?;
                     config.set_default_service(&prefix.as_list_item().unwrap().text)?;
