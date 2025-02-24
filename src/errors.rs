@@ -22,7 +22,7 @@ pub enum ProjectInitError {
 }
 
 #[derive(Debug, Error)]
-pub enum CPRConfigError {
+pub enum TemplateConfigError {
     #[error("Failed to read cpr.toml from template")]
     FileReadFail,
 

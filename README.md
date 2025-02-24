@@ -1,5 +1,7 @@
 # CPR
 
+**C** **PR**oject manager
+
 [![Crates.io Version](https://img.shields.io/crates/v/cpr-cli)](https://crates.io/crates/cpr-cli)
 [![Crates.io Size](https://img.shields.io/crates/size/cpr-cli)](https://crates.io/crates/cpr-cli)
 [![Crates.io License](https://img.shields.io/crates/l/cpr-cli)](https://crates.io/crates/cpr-cli)
