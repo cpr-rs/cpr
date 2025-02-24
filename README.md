@@ -51,16 +51,40 @@ cargo build --release
 ```helptext
 A simple git-based project manager aimed at C/C++
 
-Usage: cpr <COMMAND>
+Usage: cpr [OPTIONS] <COMMAND>
 
 Commands:
-  init  Initialize a directory with a template from GitHub
-  new   Create a new project with a template from GitHub
+  init  Initialize a directory with a template
+  new   Create a new project with a template
   help  Print this message or the help of the given subcommand(s)
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  -c, --config <CONFIG>  Global configuration file path
+  -h, --help             Print help
+  -V, --version          Print version
+```
+
+## Configuration
+
+The default configuration file should be located at `$HOME/.cpr/config.toml`. You can specify a custom configuration file using the `-c` or `--config` flag. Below is the default configuration file:
+
+```toml
+default_service = "gh"
+
+[services.gh]
+url = "https://github.com/{{ repo }}.git"
+
+[services.gl]
+url = "https://gitlab.com/{{ repo }}.git"
+
+[services.bb]
+url = "https://bitbucket.org/{{ repo }}.git"
+```
+
+Each prefix can then be used to fetch templates from the respective service. `{{ repo }}` will be replaced with the given requested repository. For example, to fetch the `cpr-rs/cpp` template from GitHub, you can use the following command:
+
+```bash
+cpr new gh:cpr-rs/cpp
 ```
 
 ## License

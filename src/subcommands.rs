@@ -233,7 +233,7 @@ fn clone_repository(directory: &Path, repo_path: String, config: &Config) -> mie
         let repo = parts[1];
         config.clone_url(prefix, repo)
     } else {
-        config.clone_url(&config.default_prefix, &repo_path)
+        config.clone_url(&config.default_service, &repo_path)
     };
 
     log::debug!("cloning repository: {}", url);
